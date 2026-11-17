@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+# Install macOS launchd agents so discovery, AI matching and notifications run in the background
+# without a terminal or browser open.  Usage:
+#   bin/install-launchd            # install scheduler + queue worker (+ web server with --with-web)
+#   bin/install-launchd --uninstall
+#
+# IMPORTANT: launchd agents only run while you are logged in and the Mac is awake.
+# Nothing runs while the Mac is shut down or asleep. See README → "Background operation on macOS".
+set -euo pipefail
+cd "$(dirname "$0")/.."
+APP_DIR="$(pwd)"
+AGENTS="$HOME/Library/LaunchAgents"
+LOGS="$APP_DIR/storage/logs"
+PHP_BIN="$(command -v php)"
+LABELS=(com.aijobhunter.scheduler com.aijobhunter.queue com.aijobhunter.web)
+
+unload() {
+  for label in "${LABELS[@]}"; do
+    launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
+    rm -f "$AGENTS/$label.plist"
+  done
+}
+
+if [[ "${1:-}" == "--uninstall" ]]; then
+  unload
+  echo "Removed AI Job Hunter launchd agents."
+  exit 0
+fi
+
+[[ -x "$PHP_BIN" ]] || { echo "php not found on PATH"; exit 1; }
+mkdir -p "$AGENTS" "$LOGS"
+unload
+
+render() { # template label
+  sed -e "s#__APP_DIR__#$APP_DIR#g" -e "s#__PHP__#$PHP_BIN#g" -e "s#__LOGS__#$LOGS#g" -e "s#__PATH__#$PATH#g" \
+    "deploy/macos/$1.plist" > "$AGENTS/$1.plist"
+  launchctl bootstrap "gui/$(id -u)" "$AGENTS/$1.plist"
+  echo "Loaded $1"
+}
+
+render com.aijobhunter.scheduler
+render com.aijobhunter.queue
+if [[ "${1:-}" == "--with-web" ]]; then
+  npm run build >/dev/null
+  render com.aijobhunter.web
+  echo "Web UI: http://127.0.0.1:8000"
+fi
+
+echo
+echo "Done. Check status with: launchctl list | grep aijobhunter"
+echo "Logs: $LOGS/launchd-*.log"
+echo "Reminder: the Mac must be on, logged in and awake for scheduled scans to run."

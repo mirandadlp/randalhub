@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Start every local service AI Job Hunter needs, in one terminal (Ctrl+C stops them all):
+#   web server · queue worker · scheduler · Vite dev server
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+if [ ! -f .env ]; then echo "Missing .env — run: cp .env.example .env && php artisan key:generate"; exit 1; fi
+if [ ! -d vendor ]; then composer install; fi
+if [ ! -d node_modules ]; then npm install; fi
+
+php artisan migrate --force
+
+exec npx concurrently -k -n web,queue,scheduler,vite -c blue,green,magenta,yellow \
+  "PHP_CLI_SERVER_WORKERS=4 php artisan serve --host=127.0.0.1 --port=${APP_PORT:-8000}" \
+  "php artisan queue:work --queue=discovery,ai,automation,default --tries=3 --timeout=900 --sleep=2" \
+  "php artisan schedule:work" \
+  "npm run dev"
